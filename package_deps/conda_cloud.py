@@ -513,9 +513,10 @@ class CondaCloud:
                     f"HTTP error (unable to open: {url}): {request.status}"
                 )
 
-            for chunk in iter(lambda: request.read(CHUNK_SIZE), b""):
-                if chunk:  # Filter out keep-alive new chunks
-                    stream.write(chunk)
+            with request:
+                for chunk in iter(lambda: request.read(CHUNK_SIZE), b""):
+                    if chunk:  # Filter out keep-alive new chunks
+                        stream.write(chunk)
         return target_json, arch
 
     def _call_on_finished_callbacks(self):

@@ -129,7 +129,8 @@ class PyPiCloud:
                 urllib.request.Request(url, headers={"User-Agent": "Mozilla"})
             )
             if request.status == 200:
-                data = request.read().decode("utf-8", "replace")
+                with request:
+                    data = request.read().decode("utf-8", "replace")
                 self._cached_cloud[url] = json.loads(data)
             else:
                 log.info(
