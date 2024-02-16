@@ -9,3 +9,8 @@ description = "This package has dependencies meant to be vendored internally in 
 
 [tool.distutils.bdist_wheel]
 universal = true
+
+[tool.setuptools.packages.find]
+include = ["action_package_handling", "package_deps", "termcolors"]  # package names should match these glob patterns (["*"] by default)
+# exclude = ["my_package.tests*"]  # exclude packages matching these glob patterns (empty by default)
+# namespaces = false  # to disable scanning PEP 420 namespaces (true by default)
