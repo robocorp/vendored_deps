@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vendored_deps"
+version = "0.0.1"
+description = "This package has dependencies meant to be vendored internally in other robocorp projects."
+
+[tool.distutils.bdist_wheel]
+universal = true
