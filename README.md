@@ -11,29 +11,21 @@ are required, a fallback should be provided if it's not found).
 
 # robocorp repo:
 
-So, at the `robo` root it was added as:
+At the `robo` root it was added at:
 
-```
-git subtree add --prefix action_server/src/robocorp/action_server/vendored_deps git@github.com:robocorp/vendored_deps.git master --squash
-```
+`action_server/src/robocorp/action_server/vendored_deps`
 
-And it can be updated (again, at the `robo` root) with:
+Update there with:
 
-```
-git subtree pull --prefix action_server/src/robocorp/action_server/vendored_deps git@github.com:robocorp/vendored_deps.git master --squash
-```
+`pip install https://github.com/robocorp/vendored_deps/archive/master.zip --target .`
+
 
 # robotframework-lsp repo:
 
-So, at the `robotframework-lsp` root it was added as:
+At the `robotframework-lsp` root it was added as:
 
-```
-git subtree add --prefix robocorp-code/src/robocorp_code/vendored_deps git@github.com:robocorp/vendored_deps.git master --squash
-```
+`robocorp-code/src/robocorp_code/vendored_deps`
 
-And it can be updated (again, at the `robotframework-lsp` root) with:
-
-```
-git subtree pull --prefix robocorp-code/src/robocorp_code/vendored_deps git@github.com:robocorp/vendored_deps.git master --squash
-```
+Update there with:
+`pip install https://github.com/robocorp/vendored_deps/archive/master.zip --target .`
 
