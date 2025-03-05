@@ -5,98 +5,16 @@ it a standalone package in the future (maybe with a command line UI).
 
 import pathlib
 import typing
-from typing import Any, Iterator, List, Optional, Tuple, Union
+from collections.abc import Iterator
+from typing import Optional, Union
 
-import yaml
-
-from ._deps_protocols import (
-    ICondaCloud,
-    IPyPiCloud,
-    _DiagnosticSeverity,
-    _DiagnosticsTypedDict,
-    _RangeTypedDict,
-)
+from ..ls_protocols import _DiagnosticSeverity, _DiagnosticsTypedDict
+from ._deps_protocols import ICondaCloud, IPyPiCloud
 
 if typing.TYPE_CHECKING:
     from ._conda_deps import CondaDepInfo, CondaDeps
     from ._package_deps import PackageDepsConda, PackageDepsPip
     from ._pip_deps import PipDepInfo, PipDeps
-
-
-class ScalarInfo:
-    def __init__(self, scalar: Any, location: Optional[Tuple[int, int, int, int]]):
-        """
-        Args:
-            scalar:
-            location: tuple(start_line, start_col, end_line, end_col)
-        """
-        self.scalar = scalar
-        self.location = location
-
-    def __repr__(self):
-        return repr(self.scalar)
-
-    def __str__(self):
-        return str(self.scalar)
-
-    def __eq__(self, o):
-        if isinstance(o, ScalarInfo):
-            return self.scalar == o.scalar
-
-        return False
-
-    def __ne__(self, o):
-        return not self == o
-
-    def __hash__(self):
-        return hash(self.scalar)
-
-    def as_range(self) -> _RangeTypedDict:
-        assert self.location
-        start_line, start_col, end_line, end_col = self.location
-        return create_range_from_location(start_line, start_col, end_line, end_col)
-
-
-def create_range_from_location(
-    start_line: int,
-    start_col: int,
-    end_line: Optional[int] = None,
-    end_col: Optional[int] = None,
-) -> _RangeTypedDict:
-    """
-    If the end_line and end_col aren't passed we consider
-    that the location should go up until the end of the line.
-    """
-    if end_line is None:
-        assert end_col is None
-        end_line = start_line + 1
-        end_col = 0
-    assert end_col is not None
-    dct: _RangeTypedDict = {
-        "start": {
-            "line": start_line,
-            "character": start_col,
-        },
-        "end": {
-            "line": end_line,
-            "character": end_col,
-        },
-    }
-    return dct
-
-
-class LoaderWithLines(yaml.SafeLoader):
-    def construct_scalar(self, node, *args, **kwargs):
-        scalar = yaml.SafeLoader.construct_scalar(self, node, *args, **kwargs)
-        return ScalarInfo(
-            scalar=scalar,
-            location=(
-                node.start_mark.line,
-                node.start_mark.column,
-                node.end_mark.line,
-                node.end_mark.column,
-            ),
-        )
 
 
 class BaseAnalyzer:
@@ -111,7 +29,7 @@ class BaseAnalyzer:
         contents: str,
         path: str,
         conda_cloud: ICondaCloud,
-        pypi_cloud: Optional[IPyPiCloud] = None,
+        pypi_cloud: IPyPiCloud | None = None,
     ):
         """
         Args:
@@ -124,8 +42,8 @@ class BaseAnalyzer:
         self.path = path
 
         self._loaded_yaml = False
-        self._load_errors: List[_DiagnosticsTypedDict] = []
-        self._yaml_data: Optional[dict] = None
+        self._load_errors: list[_DiagnosticsTypedDict] = []
+        self._yaml_data: dict | None = None
 
         if pypi_cloud is None:
             self._pypi_cloud = PyPiCloud()
@@ -139,11 +57,14 @@ class BaseAnalyzer:
         Loads the base information and creates errors for syntax errors
         loading the yaml.
         """
+
         if self._loaded_yaml:
             return
         self._loaded_yaml = True
 
-        from yaml.parser import ParserError
+        from yaml.error import MarkedYAMLError
+
+        from ..yaml_with_location import LoaderWithLines, create_range_from_location
 
         diagnostic: _DiagnosticsTypedDict
 
@@ -159,19 +80,19 @@ class BaseAnalyzer:
                 diagnostic = {
                     "range": create_range_from_location(0, 0),
                     "severity": _DiagnosticSeverity.Error,
-                    "source": "robocorp-code",
+                    "source": "sema4ai",
                     "message": "Error: expected dict to be root of yaml",
                 }
                 self._load_errors.append(diagnostic)
 
-        except ParserError as e:
+        except MarkedYAMLError as e:
             if e.problem_mark:
                 diagnostic = {
                     "range": create_range_from_location(
                         e.problem_mark.line, e.problem_mark.column
                     ),
                     "severity": _DiagnosticSeverity.Error,
-                    "source": "robocorp-code",
+                    "source": "sema4ai",
                     "message": f"Syntax error: {e}",
                 }
                 self._load_errors.append(diagnostic)
@@ -184,7 +105,7 @@ class BaseAnalyzer:
                 diagnostic = {
                     "range": dep_info.dep_range,
                     "severity": _DiagnosticSeverity.Error,
-                    "source": "robocorp-code",
+                    "source": "sema4ai",
                     "message": dep_info.error_msg,
                 }
 
@@ -205,7 +126,7 @@ class BaseAnalyzer:
                         diagnostic = {
                             "range": dep_info.dep_range,
                             "severity": _DiagnosticSeverity.Warning,
-                            "source": "robocorp-code",
+                            "source": "sema4ai",
                             "message": f"Consider updating '{dep_info.name}' to the latest version: '{latest_cloud_version}'. "
                             + f"Found {len(newer_cloud_versions)} versions newer than the current one: {', '.join(newer_cloud_versions)}.",
                         }
@@ -233,7 +154,7 @@ class BaseAnalyzer:
                     diagnostic = {
                         "range": dep_range,
                         "severity": _DiagnosticSeverity.Warning,
-                        "source": "robocorp-code",
+                        "source": "sema4ai",
                         "message": "The official support for versions lower than Python 3.8 has ended. "
                         + " It is advisable to transition to a newer version "
                         + "(Python 3.9 or newer is recommended).",
@@ -254,7 +175,7 @@ class BaseAnalyzer:
                     diagnostic = {
                         "range": dep_range,
                         "severity": _DiagnosticSeverity.Warning,
-                        "source": "robocorp-code",
+                        "source": "sema4ai",
                         "message": "Consider updating pip to a newer version (at least pip 22 onwards is recommended).",
                     }
 
@@ -265,14 +186,14 @@ class BaseAnalyzer:
         if sqlite_queries:
             with sqlite_queries.db_cursors() as db_cursors:
                 for conda_dep in self._conda_deps.iter_deps_infos():
-                    if conda_dep.name in ("python", "pip"):
+                    if conda_dep.name in ("python", "pip", "uv"):
                         continue
 
                     if conda_dep.error_msg:
                         diagnostic = {
                             "range": conda_dep.dep_range,
                             "severity": _DiagnosticSeverity.Error,
-                            "source": "robocorp-code",
+                            "source": "sema4ai",
                             "message": conda_dep.error_msg,
                         }
 
@@ -302,7 +223,7 @@ class BaseAnalyzer:
                         diagnostic = {
                             "range": conda_dep.dep_range,
                             "severity": _DiagnosticSeverity.Warning,
-                            "source": "robocorp-code",
+                            "source": "sema4ai",
                             "message": f"Consider updating '{conda_dep.name}' to match the latest version: '{last_version}'. "
                             + f"Found {len(newer_cloud_versions)} versions that don't match the version specification: {', '.join(newer_cloud_versions)}.",
                         }
@@ -314,6 +235,8 @@ class BaseAnalyzer:
         Args:
             line: 0-based line
         """
+        from ..yaml_with_location import is_inside
+
         self._load_yaml_info()
         for dep_info in self._pip_deps.iter_deps_infos():
             if is_inside(dep_info.dep_range, line, col):
@@ -321,11 +244,44 @@ class BaseAnalyzer:
         return None
 
     def find_conda_dep_at(self, line, col) -> "Optional[CondaDepInfo]":
+        from ..yaml_with_location import is_inside
+
         self._load_yaml_info()
         for dep_info in self._conda_deps.iter_deps_infos():
             if is_inside(dep_info.dep_range, line, col):
                 return dep_info
         return None
+
+
+def extract_range(*items):
+    from ..yaml_with_location import create_range_from_location
+
+    for item in items:
+        if hasattr(item, "as_range"):
+            return item.as_range()
+    return create_range_from_location(0, 0)
+
+
+def type_repr(obj):
+    # Needed to deal with the `str_with_location`, `dict_with_location`, etc.
+    if isinstance(obj, str):
+        return "str"
+    elif isinstance(obj, bool):
+        return "bool"
+    elif isinstance(obj, int):
+        return "int"
+    elif isinstance(obj, float):
+        return "float"
+    elif isinstance(obj, list):
+        return "list"
+    elif isinstance(obj, dict):
+        return "dict"
+    elif isinstance(obj, tuple):
+        return "tuple"
+    try:
+        return type(obj).__name__
+    except Exception:
+        return str(type(obj))
 
 
 class PackageYamlAnalyzer(BaseAnalyzer):
@@ -334,13 +290,13 @@ class PackageYamlAnalyzer(BaseAnalyzer):
         contents: str,
         path: str,
         conda_cloud: ICondaCloud,
-        pypi_cloud: Optional[IPyPiCloud] = None,
+        pypi_cloud: IPyPiCloud | None = None,
     ):
         from ._package_deps import PackageDepsConda, PackageDepsPip
 
         self._pip_deps = PackageDepsPip()
         self._conda_deps = PackageDepsConda()
-        self._additional_load_errors: List[_DiagnosticsTypedDict] = []
+        self._additional_load_errors: list[_DiagnosticsTypedDict] = []
 
         BaseAnalyzer.__init__(self, contents, path, conda_cloud, pypi_cloud=pypi_cloud)
 
@@ -357,28 +313,158 @@ class PackageYamlAnalyzer(BaseAnalyzer):
         yield from iter(self._additional_load_errors)
         yield from self.iter_conda_issues()
         yield from self.iter_pip_issues()
+        yield from self._iter_external_endpoints_issues()
+
+    def _iter_external_endpoints_issues(self) -> Iterator[_DiagnosticsTypedDict]:
+        from ..yaml_with_location import dict_with_location
+
+        data = self._yaml_data
+        if not data:
+            return
+
+        external_endpoints = data.get("external-endpoints")
+        if not external_endpoints:
+            return
+
+        if not isinstance(external_endpoints, list):
+            yield {
+                "range": extract_range(external_endpoints),
+                "severity": _DiagnosticSeverity.Error,
+                "source": "sema4ai",
+                "message": f"Error: expected 'external-endpoints' to be a list. Found: {external_endpoints!r}",
+            }
+            return  # Unable to proceed
+
+        expected_keys = {"name", "description", "additional-info-link", "rules"}
+        endpoint: dict_with_location
+        for endpoint in external_endpoints:
+            if not isinstance(endpoint, dict):
+                yield {
+                    "range": extract_range(endpoint),
+                    "severity": _DiagnosticSeverity.Error,
+                    "source": "sema4ai",
+                    "message": f"Error: 'external-endpoint' must be a dictionary. Found: {endpoint!r}",
+                }
+                continue  # Unable to proceed
+
+            # Check for unexpected keys
+            unexpected_keys = set(endpoint.keys()) - expected_keys
+            if unexpected_keys:
+                yield {
+                    "range": extract_range(endpoint),
+                    "severity": _DiagnosticSeverity.Warning,
+                    "source": "sema4ai",
+                    "message": f"Warning: unexpected key(s) in 'external-endpoint': {sorted(unexpected_keys)}. Expected keys are: {sorted(expected_keys)}.",
+                }
+
+            # Validate required fields
+            if "name" not in endpoint:
+                yield {
+                    "range": extract_range(endpoint),
+                    "severity": _DiagnosticSeverity.Error,
+                    "source": "sema4ai",
+                    "message": "Error: 'name' is required and must be a string in 'external-endpoint'.",
+                }
+            elif not isinstance(endpoint["name"], str):
+                yield {
+                    "range": extract_range(endpoint["name"], endpoint),
+                    "severity": _DiagnosticSeverity.Error,
+                    "source": "sema4ai",
+                    "message": f"Error: 'name' must be a string in 'external-endpoint'. Found: {endpoint['name']!r} (type: {type_repr(endpoint['name'])})",
+                }
+
+            if "description" not in endpoint:
+                yield {
+                    "range": extract_range(endpoint),
+                    "severity": _DiagnosticSeverity.Error,
+                    "source": "sema4ai",
+                    "message": "Error: 'description' is required in 'external-endpoint'.",
+                }
+            elif not isinstance(endpoint["description"], str):
+                yield {
+                    "range": extract_range(endpoint["description"], endpoint),
+                    "severity": _DiagnosticSeverity.Error,
+                    "source": "sema4ai",
+                    "message": f"Error: 'description' must be a string in 'external-endpoint'. Found: {endpoint['description']!r}",
+                }
+
+            # Validate optional fields
+            if "additional-info-link" in endpoint and not isinstance(
+                endpoint["additional-info-link"], str
+            ):
+                additional_info_link = endpoint["additional-info-link"]
+                yield {
+                    "range": extract_range(additional_info_link, endpoint),
+                    "severity": _DiagnosticSeverity.Error,
+                    "source": "sema4ai",
+                    "message": f"Error: 'additional-info-link' must be a string if provided. Found: {additional_info_link!r} (type: {type_repr(additional_info_link)})",
+                }
+
+            if "rules" in endpoint:
+                rules = endpoint["rules"]
+                if not isinstance(rules, list):
+                    yield {
+                        "range": extract_range(rules, endpoint),
+                        "severity": _DiagnosticSeverity.Error,
+                        "source": "sema4ai",
+                        "message": f"Error: 'rules' must be a list if provided. Found: {rules!r} (type: {type_repr(rules)})",
+                    }
+                else:
+                    for rule in rules:
+                        if not isinstance(rule, dict):
+                            yield {
+                                "range": extract_range(rule, endpoint),
+                                "severity": _DiagnosticSeverity.Error,
+                                "source": "sema4ai",
+                                "message": f"Error: each rule in 'rules' must be a dictionary. Found: {rule!r} (type: {type_repr(rule)})",
+                            }
+                            continue
+
+                        if "host" in rule and not isinstance(rule["host"], str):
+                            yield {
+                                "range": extract_range(rule.get("host"), rule),
+                                "severity": _DiagnosticSeverity.Error,
+                                "source": "sema4ai",
+                                "message": f"Error: 'host' must be a string if provided in a rule. Found: {rule['host']!r} (type: {type_repr(rule['host'])})",
+                            }
+
+                        if "port" in rule:
+                            if not isinstance(rule["port"], int) or not (
+                                0 <= rule["port"] <= 65535
+                            ):
+                                yield {
+                                    "range": extract_range(rule.get("port"), rule),
+                                    "severity": _DiagnosticSeverity.Error,
+                                    "source": "sema4ai",
+                                    "message": f"Error: 'port' must be a valid integer between 0 and 65535 if provided in a rule. Found: {rule['port']!r} (type: {type_repr(rule['port'])})",
+                                }
 
     def _load_yaml_info(self) -> None:
         if self._loaded_yaml:
             return
+
+        from ..yaml_with_location import (
+            create_range_from_location,
+            str_with_location,
+            str_with_location_capture,
+        )
+
         BaseAnalyzer._load_yaml_info(self)
         data = self._yaml_data
         if not data:
             return
 
         diagnostic: _DiagnosticsTypedDict
-        dependencies_key_entry: ScalarInfo
-        for key, v in data.items():
-            if isinstance(key, ScalarInfo) and isinstance(key.scalar, str):
-                if key.scalar == "dependencies":
-                    dependencies = v
-                    dependencies_key_entry = key
-                    break
-        else:
+        dependencies_key_entry: str_with_location_capture = str_with_location_capture(
+            "dependencies"
+        )
+
+        dependencies = data.get(dependencies_key_entry)
+        if dependencies is None:
             diagnostic = {
                 "range": create_range_from_location(0, 0),
                 "severity": _DiagnosticSeverity.Error,
-                "source": "robocorp-code",
+                "source": "sema4ai",
                 "message": "Error: 'dependencies' entry not found",
             }
             self._additional_load_errors.append(diagnostic)
@@ -388,7 +474,7 @@ class PackageYamlAnalyzer(BaseAnalyzer):
             diagnostic = {
                 "range": create_range_from_location(0, 0),
                 "severity": _DiagnosticSeverity.Error,
-                "source": "robocorp-code",
+                "source": "sema4ai",
                 "message": "Error: 'dependencies' entry must not be empty",
             }
             self._additional_load_errors.append(diagnostic)
@@ -397,43 +483,40 @@ class PackageYamlAnalyzer(BaseAnalyzer):
             diagnostic = {
                 "range": create_range_from_location(0, 0),
                 "severity": _DiagnosticSeverity.Error,
-                "source": "robocorp-code",
-                "message": f"Error: expected 'dependencies' entry to be a dict (with 'conda-forge' and 'pypi' entries). Found: '{type(dependencies)}'",
+                "source": "sema4ai",
+                "message": f"Error: expected 'dependencies' entry to be a dict (with 'conda-forge' and 'pypi' entries). Found: '{type_repr(dependencies)}'",
             }
             self._additional_load_errors.append(diagnostic)
         else:
             for dep_name, dep in dependencies.items():
-                if isinstance(dep_name, ScalarInfo):
-                    if dep_name.scalar == "pypi":
+                if isinstance(dep_name, str_with_location):
+                    if dep_name == "pypi":
                         if not isinstance(dep, list):
                             diagnostic = {
                                 "range": dep_name.as_range(),
                                 "severity": _DiagnosticSeverity.Error,
-                                "source": "robocorp-code",
-                                "message": f"Error: expected the entries of pypi to be a list. Found: {type(dep)}",
+                                "source": "sema4ai",
+                                "message": f"Error: expected the entries of pypi to be a list. Found: {type_repr(dep)}",
                             }
                             self._additional_load_errors.append(diagnostic)
                             continue
 
                         for entry in dep:
-                            if not isinstance(entry, ScalarInfo):
+                            if not isinstance(entry, str_with_location):
                                 diagnostic = {
                                     "range": dep_name.as_range(),
                                     "severity": _DiagnosticSeverity.Error,
-                                    "source": "robocorp-code",
-                                    "message": f"Error: expected the entries of pypi to be strings. Found: {type(entry)}: {entry}",
+                                    "source": "sema4ai",
+                                    "message": f"Error: expected the entries of pypi to be strings. Found: {type_repr(entry)}: {entry}",
                                 }
                                 self._additional_load_errors.append(diagnostic)
                                 continue
 
-                            if (
-                                entry.scalar.replace(" ", "")
-                                == "--use-feature=truststore"
-                            ):
+                            if entry.replace(" ", "") == "--use-feature=truststore":
                                 diagnostic = {
                                     "range": entry.as_range(),
                                     "severity": _DiagnosticSeverity.Warning,
-                                    "source": "robocorp-code",
+                                    "source": "sema4ai",
                                     "message": (
                                         "--use-feature=truststore flag does not need to "
                                         "be specified (it is automatically used when a "
@@ -443,40 +526,40 @@ class PackageYamlAnalyzer(BaseAnalyzer):
                                 self._additional_load_errors.append(diagnostic)
                                 continue
 
-                            if entry.scalar.startswith("--"):
+                            if entry.startswith("--"):
                                 diagnostic = {
                                     "range": entry.as_range(),
                                     "severity": _DiagnosticSeverity.Error,
-                                    "source": "robocorp-code",
-                                    "message": f"Invalid entry in pypi: {entry.scalar}",
+                                    "source": "sema4ai",
+                                    "message": f"Invalid entry in pypi: {entry}",
                                 }
                                 self._additional_load_errors.append(diagnostic)
                                 continue
 
-                            self._pip_deps.add_dep(entry.scalar, entry.as_range())
+                            self._pip_deps.add_dep(entry, entry.as_range())
 
-                    elif dep_name.scalar == "conda-forge":
+                    elif dep_name == "conda-forge":
                         for entry in dep:
-                            if not isinstance(entry, ScalarInfo):
+                            if not isinstance(entry, str_with_location):
                                 diagnostic = {
                                     "range": dep_name.as_range(),
                                     "severity": _DiagnosticSeverity.Error,
-                                    "source": "robocorp-code",
-                                    "message": f"Error: expected the entries of conda-forge to be strings. Found: {type(entry)}: {entry}",
+                                    "source": "sema4ai",
+                                    "message": f"Error: expected the entries of conda-forge to be strings. Found: {type_repr(entry)}: {entry}",
                                 }
                                 self._additional_load_errors.append(diagnostic)
                                 continue
 
-                            self._conda_deps.add_dep(entry.scalar, entry.as_range())
+                            self._conda_deps.add_dep(entry, entry.as_range())
 
                     else:
                         diagnostic = {
                             "range": dep_name.as_range(),
                             "severity": _DiagnosticSeverity.Error,
-                            "source": "robocorp-code",
+                            "source": "sema4ai",
                             "message": (
                                 "Error: only expected children are pypi and conda (dict entries). "
-                                f"Found: {dep_name.scalar}"
+                                f"Found: {dep_name}"
                             ),
                         }
                         self._additional_load_errors.append(diagnostic)
@@ -484,7 +567,7 @@ class PackageYamlAnalyzer(BaseAnalyzer):
                     diagnostic = {
                         "range": dependencies_key_entry.as_range(),
                         "severity": _DiagnosticSeverity.Error,
-                        "source": "robocorp-code",
+                        "source": "sema4ai",
                         "message": "Error: found unexpected entry in dependencies.",
                     }
                     self._additional_load_errors.append(diagnostic)
@@ -496,7 +579,7 @@ class CondaYamlAnalyzer(BaseAnalyzer):
         contents: str,
         path: str,
         conda_cloud: ICondaCloud,
-        pypi_cloud: Optional[IPyPiCloud] = None,
+        pypi_cloud: IPyPiCloud | None = None,
     ):
         from ._conda_deps import CondaDeps
         from ._pip_deps import PipDeps
@@ -509,17 +592,15 @@ class CondaYamlAnalyzer(BaseAnalyzer):
     def _load_yaml_info(self) -> None:
         if self._loaded_yaml:
             return
+
+        from ..yaml_with_location import str_with_location
+
         BaseAnalyzer._load_yaml_info(self)
         data = self._yaml_data
         if not data:
             return
 
-        dependencies = data.get(
-            ScalarInfo(
-                "dependencies",
-                None,
-            ),
-        )
+        dependencies = data.get("dependencies")
 
         conda_versions = self._conda_deps
         pip_versions = self._pip_deps
@@ -530,16 +611,16 @@ class CondaYamlAnalyzer(BaseAnalyzer):
                 # A bunch of code from conda was copied to handle that so that we
                 # can just `conda_match_spec.parse_spec_str` to identify the version
                 # we're dealing with.
-                if isinstance(dep, ScalarInfo) and isinstance(dep.scalar, str):
-                    conda_versions.add_dep(dep.scalar, dep.as_range())
+                if isinstance(dep, str_with_location):
+                    conda_versions.add_dep(dep, dep.as_range())
                 elif isinstance(dep, dict):
-                    pip_deps = dep.get(ScalarInfo("pip", None))
+                    pip_deps = dep.get("pip")
                     if pip_deps:
                         for dep in pip_deps:
-                            if isinstance(dep, ScalarInfo) and isinstance(
-                                dep.scalar, str
+                            if isinstance(dep, str_with_location) and isinstance(
+                                dep, str
                             ):
-                                pip_versions.add_dep(dep.scalar, dep.as_range())
+                                pip_versions.add_dep(dep, dep.as_range())
 
     def iter_conda_yaml_issues(self) -> Iterator[_DiagnosticsTypedDict]:
         self._load_yaml_info()
@@ -553,88 +634,3 @@ class CondaYamlAnalyzer(BaseAnalyzer):
 
         yield from self.iter_conda_issues()
         yield from self.iter_pip_issues()
-
-
-class _Position:
-    def __init__(self, line: int = 0, character: int = 0):
-        self.line: int = line
-        self.character: int = character
-
-    def to_dict(self):
-        return {"line": self.line, "character": self.character}
-
-    def __repr__(self):
-        import json
-
-        return json.dumps(self.to_dict(), indent=4)
-
-    def __getitem__(self, name):
-        # provide tuple-access, not just dict access.
-        if name == 0:
-            return self.line
-        if name == 1:
-            return self.character
-        return getattr(self, name)
-
-    def __eq__(self, other):
-        return (
-            isinstance(other, _Position)
-            and self.line == other.line
-            and self.character == other.character
-        )
-
-    def __ge__(self, other):
-        line_gt = self.line > other.line
-
-        if line_gt:
-            return line_gt
-
-        if self.line == other.line:
-            return self.character >= other.character
-
-        return False
-
-    def __gt__(self, other):
-        line_gt = self.line > other.line
-
-        if line_gt:
-            return line_gt
-
-        if self.line == other.line:
-            return self.character > other.character
-
-        return False
-
-    def __le__(self, other):
-        line_lt = self.line < other.line
-
-        if line_lt:
-            return line_lt
-
-        if self.line == other.line:
-            return self.character <= other.character
-
-        return False
-
-    def __lt__(self, other):
-        line_lt = self.line < other.line
-
-        if line_lt:
-            return line_lt
-
-        if self.line == other.line:
-            return self.character < other.character
-
-        return False
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
-
-
-def is_inside(range_dct: _RangeTypedDict, line: int, col: int) -> bool:
-    start = range_dct["start"]
-    end = range_dct["end"]
-    start_pos = _Position(start["line"], start["character"])
-    end_pos = _Position(end["line"], end["character"])
-    curr_pos = _Position(line, col)
-    return start_pos <= curr_pos <= end_pos
